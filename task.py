@@ -5,34 +5,23 @@ Taskbar flutuante revolucionária para Core S System
 """
 
 import tkinter as tk
+import os
 from tkinter import ttk
 import subprocess
 import threading
 import time
-import os
 import psutil
 from datetime import datetime
-
-# Tentar importar keyboard, se não tiver usar xbindkeys como fallback
-try:
-    import keyboard
-    KEYBOARD_AVAILABLE = True
-    print("✅ Biblioteca 'keyboard' disponível - usando atalhos globais nativos")
-except ImportError:
-    KEYBOARD_AVAILABLE = False
-    print("⚠️ Biblioteca 'keyboard' não encontrada")
-    print("💡 Instale com: pip install keyboard")
-    print("🔧 Usando xbindkeys como fallback")
 
 class CoresFloatingTaskbar:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Core S Taskbar")
         
-        # Configurações da janela principal (invisível)
-        self.root.overrideredirect(True)
-        self.root.attributes('-topmost', True)
-        self.root.withdraw()  # Ocultar janela principal
+        # Configurações da janela
+        self.root.overrideredirect(True)  # Remove borda da janela
+        self.root.attributes('-topmost', True)  # Sempre no topo
+        self.root.attributes('-alpha', 0.95)  # Leve transparência
         
         # Estados da taskbar
         self.is_expanded = False
@@ -46,23 +35,25 @@ class CoresFloatingTaskbar:
         ]
         
         # Dimensões
-        self.square_size = 60
+        self.square_size = 70
         self.expanded_width = 400
-        self.expanded_height = 45  # Altura da barra (menor que quadrado)
+        self.expanded_height = 30  # Menor que o quadrado
         self.margin = 20
         
         # Cores Core S
-        self.bg_color = "#0d1117"
-        self.accent_color = "#58a6ff"
-        self.secondary_color = "#21262d"
+        self.bg_color = "#3F0808"
+        self.accent_color = "#ffffff"
+        self.secondary_color = "#2F0808"
         self.text_color = "#f0f6fc"
         
-        # Criar widgets separados
-        self.create_square_widget()
-        self.create_expanded_widget()
+        # Configurar janela
+        self.setup_window()
+        
+        # Criar interface
+        self.create_square_interface()
         
         # Posicionar inicial
-        self.position_widgets()
+        self.position_taskbar()
         
         # Configurar atalhos globais
         self.setup_hotkeys()
@@ -73,22 +64,27 @@ class CoresFloatingTaskbar:
         # Variáveis para animação
         self.animation_running = False
     
-    def create_square_widget(self):
-        """Criar widget do quadrado S (sempre visível)"""
-        self.square_window = tk.Toplevel(self.root)
-        self.square_window.title("Core S Square")
-        self.square_window.overrideredirect(True)
-        self.square_window.attributes('-topmost', True)
-        self.square_window.attributes('-alpha', 0.95)
+    def setup_window(self):
+        """Configurar janela principal"""
+        self.root.configure(bg=self.bg_color)
         
-        # Frame do quadrado
+        # Configurar protocolo de fechamento
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        
+        # Bind para arrastar (futuro)
+        self.root.bind('<Button-1>', self.start_drag)
+        self.root.bind('<B1-Motion>', self.on_drag)
+    
+    def create_square_interface(self):
+        """Criar interface do quadrado recolhido"""
+        # Frame principal do quadrado
         self.square_frame = tk.Frame(
-            self.square_window,
+            self.root,
             width=self.square_size,
             height=self.square_size,
             bg=self.bg_color,
             relief='raised',
-            bd=2
+            bd=0
         )
         self.square_frame.pack(fill=tk.BOTH, expand=True)
         self.square_frame.pack_propagate(False)
@@ -103,7 +99,7 @@ class CoresFloatingTaskbar:
         )
         self.s_label.pack(expand=True)
         
-        # Indicador de posição
+        # Indicador de posição (pequeno ponto)
         self.position_indicator = tk.Label(
             self.square_frame,
             text="●",
@@ -112,77 +108,60 @@ class CoresFloatingTaskbar:
             bg=self.bg_color
         )
         self.position_indicator.place(x=45, y=45)
-        
-        # Bind para dar foco e atalhos (mantido como backup)
-        self.square_window.bind('<Button-1>', self.give_focus)
     
-    def create_expanded_widget(self):
-        """Criar widget da barra expandida (inicialmente oculto)"""
-        self.expanded_window = tk.Toplevel(self.root)
-        self.expanded_window.title("Core S Bar")
-        self.expanded_window.overrideredirect(True)
-        self.expanded_window.attributes('-topmost', True)
-        self.expanded_window.attributes('-alpha', 0.95)
-        self.expanded_window.withdraw()  # Inicialmente oculto
+    def create_expanded_interface(self):
+        """Criar interface expandida"""
+        # Limpar frame atual
+        for widget in self.square_frame.winfo_children():
+            widget.destroy()
         
-        # Frame da barra expandida
-        self.expanded_frame = tk.Frame(
-            self.expanded_window,
+        # Redimensionar para expansão
+        self.square_frame.configure(
+            width=self.expanded_width,
+            height=self.square_size
+        )
+        
+        # Frame do quadrado S (esquerda)
+        self.s_section = tk.Frame(
+            self.square_frame,
+            width=self.square_size,
+            height=self.square_size,
+            bg=self.bg_color,
+            relief='raised',
+            bd=0
+        )
+        self.s_section.pack(side=tk.LEFT, fill=tk.Y)
+        self.s_section.pack_propagate(False)
+        
+        # Label S
+        self.s_label = tk.Label(
+            self.s_section,
+            text="S",
+            font=("Ubuntu", 24, "bold"),
+            fg=self.accent_color,
+            bg=self.bg_color
+        )
+        self.s_label.pack(expand=True)
+        
+        # Frame expandido (direita) - menor altura
+        self.expanded_section = tk.Frame(
+            self.square_frame,
             width=self.expanded_width - self.square_size,
             height=self.expanded_height,
             bg=self.secondary_color,
             relief='raised',
-            bd=1
+            bd=0
         )
-        self.expanded_frame.pack(fill=tk.BOTH, expand=True)
-        self.expanded_frame.pack_propagate(False)
+        self.expanded_section.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(2, 0))
+        self.expanded_section.pack_propagate(False)
         
-        # Conteúdo da barra
+        # Conteúdo da expansão
         self.create_expanded_content()
-    
-    def position_widgets(self):
-        """Posicionar widgets do quadrado e barra"""
-        # Obter dimensões da tela
-        screen_width = self.square_window.winfo_screenwidth()
-        screen_height = self.square_window.winfo_screenheight()
-        
-        # Calcular posições baseado no canto atual
-        corner = self.corners[self.current_corner]
-        
-        if corner == 'bottom_left':
-            square_x = self.margin
-            square_y = screen_height - self.square_size - self.margin
-        elif corner == 'top_left':
-            square_x = self.margin
-            square_y = self.margin
-        elif corner == 'top_right':
-            square_x = screen_width - self.square_size - self.margin
-            square_y = self.margin
-        elif corner == 'bottom_right':
-            square_x = screen_width - self.square_size - self.margin
-            square_y = screen_height - self.square_size - self.margin
-        
-        # Posicionar quadrado
-        self.square_window.geometry(f"{self.square_size}x{self.square_size}+{square_x}+{square_y}")
-        
-        # Posicionar barra expandida (se expandido)
-        if self.is_expanded and corner in ['top_left', 'bottom_left']:
-            bar_x = square_x + self.square_size + 2  # 2px de espaço
-            
-            # Alinhar pela parte inferior
-            if corner == 'bottom_left':
-                bar_y = square_y + (self.square_size - self.expanded_height)  # Alinhamento inferior
-            else:  # top_left
-                bar_y = square_y + (self.square_size - self.expanded_height)  # Alinhamento inferior
-            
-            self.expanded_window.geometry(
-                f"{self.expanded_width - self.square_size}x{self.expanded_height}+{bar_x}+{bar_y}"
-            )
     
     def create_expanded_content(self):
         """Criar conteúdo da parte expandida"""
         # Frame superior (informações do sistema)
-        top_frame = tk.Frame(self.expanded_frame, bg=self.secondary_color, height=20)
+        top_frame = tk.Frame(self.expanded_section, bg=self.secondary_color, height=20)
         top_frame.pack(fill=tk.X, padx=5, pady=2)
         top_frame.pack_propagate(False)
         
@@ -207,7 +186,7 @@ class CoresFloatingTaskbar:
         self.system_label.pack(side=tk.LEFT)
         
         # Frame inferior (aplicações)
-        bottom_frame = tk.Frame(self.expanded_frame, bg=self.secondary_color)
+        bottom_frame = tk.Frame(self.expanded_section, bg=self.secondary_color)
         bottom_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=2)
         
         # Botões de aplicações
@@ -216,7 +195,7 @@ class CoresFloatingTaskbar:
     def create_app_buttons(self, parent):
         """Criar botões das aplicações"""
         apps = [
-            ("📁", "Files", "nemo"),
+            ("📁", "Files", "thunar"),
             ("🌐", "Browser", "firefox"),
             ("⚙️", "Settings", "xfce4-settings-manager"),
             ("💻", "Terminal", "xfce4-terminal"),
@@ -241,6 +220,40 @@ class CoresFloatingTaskbar:
             btn.bind('<Enter>', lambda e, b=btn: b.configure(bg=self.accent_color))
             btn.bind('<Leave>', lambda e, b=btn: b.configure(bg=self.bg_color))
     
+    def position_taskbar(self):
+        """Posicionar taskbar no canto atual"""
+        # Obter dimensões da tela
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        
+        # Calcular posições baseado no canto atual
+        corner = self.corners[self.current_corner]
+        
+        if corner == 'bottom_left':
+            x = self.margin
+            y = screen_height - self.square_size - self.margin
+        elif corner == 'top_left':
+            x = self.margin
+            y = self.margin
+        elif corner == 'top_right':
+            x = screen_width - self.square_size - self.margin
+            y = self.margin
+        elif corner == 'bottom_right':
+            x = screen_width - self.square_size - self.margin
+            y = screen_height - self.square_size - self.margin
+        
+        # Se expandido, ajustar posição para expansão
+        if self.is_expanded:
+            if corner in ['top_left', 'bottom_left']:
+                # Não precisa ajustar X, expansão vai para direita
+                pass
+        
+        # Atualizar geometria da janela
+        if self.is_expanded and corner in ['top_left', 'bottom_left']:
+            self.root.geometry(f"{self.expanded_width}x{self.square_size}+{x}+{y}")
+        else:
+            self.root.geometry(f"{self.square_size}x{self.square_size}+{x}+{y}")
+    
     def toggle_expansion(self):
         """Alternar entre expandido e recolhido"""
         if self.animation_running:
@@ -261,39 +274,29 @@ class CoresFloatingTaskbar:
     def expand_taskbar(self):
         """Expandir taskbar com animação"""
         def animate_expand():
-            # Posicionar barra expandida
-            self.position_widgets()
-            
-            # Mostrar barra expandida
-            self.expanded_window.deiconify()
-            
-            # Animação de expansão (da direita para esquerda)
             steps = 10
-            start_width = 10
-            end_width = self.expanded_width - self.square_size
+            start_width = self.square_size
+            end_width = self.expanded_width
             step_size = (end_width - start_width) / steps
-            
-            # Posição da barra
-            screen_width = self.square_window.winfo_screenwidth()
-            screen_height = self.square_window.winfo_screenheight()
-            corner = self.corners[self.current_corner]
-            
-            if corner == 'bottom_left':
-                square_x = self.margin
-                square_y = screen_height - self.square_size - self.margin
-            else:  # top_left
-                square_x = self.margin
-                square_y = self.margin
-            
-            bar_x = square_x + self.square_size + 2
-            bar_y = square_y + (self.square_size - self.expanded_height)
             
             for i in range(steps + 1):
                 current_width = int(start_width + (step_size * i))
-                self.expanded_window.geometry(f"{current_width}x{self.expanded_height}+{bar_x}+{bar_y}")
-                self.expanded_window.update()
+                
+                # Atualizar geometria
+                screen_height = self.root.winfo_screenheight()
+                corner = self.corners[self.current_corner]
+                
+                if corner == 'bottom_left':
+                    y = screen_height - self.square_size - self.margin
+                else:  # top_left
+                    y = self.margin
+                
+                self.root.geometry(f"{current_width}x{self.square_size}+{self.margin}+{y}")
+                self.root.update()
                 time.sleep(0.02)
             
+            # Criar interface expandida
+            self.create_expanded_interface()
             self.is_expanded = True
             self.animation_running = False
         
@@ -302,34 +305,29 @@ class CoresFloatingTaskbar:
     def collapse_taskbar(self):
         """Recolher taskbar com animação"""
         def animate_collapse():
+            # Voltar para interface quadrada
+            self.create_square_interface()
+            
             steps = 10
-            start_width = self.expanded_width - self.square_size
-            end_width = 10
+            start_width = self.expanded_width
+            end_width = self.square_size
             step_size = (start_width - end_width) / steps
-            
-            # Posição da barra
-            screen_width = self.square_window.winfo_screenwidth()
-            screen_height = self.square_window.winfo_screenheight()
-            corner = self.corners[self.current_corner]
-            
-            if corner == 'bottom_left':
-                square_x = self.margin
-                square_y = screen_height - self.square_size - self.margin
-            else:  # top_left
-                square_x = self.margin
-                square_y = self.margin
-            
-            bar_x = square_x + self.square_size + 2
-            bar_y = square_y + (self.square_size - self.expanded_height)
             
             for i in range(steps + 1):
                 current_width = int(start_width - (step_size * i))
-                self.expanded_window.geometry(f"{current_width}x{self.expanded_height}+{bar_x}+{bar_y}")
-                self.expanded_window.update()
+                
+                # Atualizar geometria
+                screen_height = self.root.winfo_screenheight()
+                corner = self.corners[self.current_corner]
+                
+                if corner == 'bottom_left':
+                    y = screen_height - self.square_size - self.margin
+                else:  # top_left
+                    y = self.margin
+                
+                self.root.geometry(f"{current_width}x{self.square_size}+{self.margin}+{y}")
+                self.root.update()
                 time.sleep(0.02)
-            
-            # Ocultar barra expandida
-            self.expanded_window.withdraw()
             
             self.is_expanded = False
             self.animation_running = False
@@ -345,14 +343,14 @@ class CoresFloatingTaskbar:
         if self.is_expanded:
             self.collapse_taskbar()
             # Aguardar animação terminar
-            self.square_window.after(300, self._complete_corner_move)
+            self.root.after(300, self._complete_corner_move)
         else:
             self._complete_corner_move()
     
     def _complete_corner_move(self):
         """Completar movimento de canto"""
         self.current_corner = (self.current_corner + 1) % 4
-        self.position_widgets()
+        self.position_taskbar()
         
         # Atualizar indicador de posição
         corner_indicators = ["◣", "◤", "◥", "◢"]
@@ -364,277 +362,120 @@ class CoresFloatingTaskbar:
         try:
             if self.is_visible:
                 print("🙈 Ocultando taskbar...")
-                self.square_window.withdraw()
-                self.expanded_window.withdraw()
+                self.root.withdraw()  # Ocultar
                 self.is_visible = False
             else:
                 print("👁️ Exibindo taskbar...")
-                self.square_window.deiconify()
-                if self.is_expanded:
-                    self.expanded_window.deiconify()
-                self.square_window.lift()
-                self.square_window.attributes('-topmost', True)
+                self.root.deiconify()  # Exibir
+                self.root.lift()  # Trazer para frente
+                self.root.attributes('-topmost', True)  # Garantir que fique no topo
                 self.is_visible = True
                 
                 # Reposicionar após exibir
-                self.position_widgets()
+                self.position_taskbar()
         
         except Exception as e:
             print(f"Erro ao alternar visibilidade: {e}")
     
     def setup_hotkeys(self):
-        """Configurar atalhos globais independentes de foco"""
-        # Método 1: Atalhos locais (quando tem foco)
-        self.square_window.bind('<KeyPress>', self.handle_keypress)
+        """Configurar atalhos de teclado globais"""
+        import threading
+        import subprocess
+        import os
         
-        # Método 2: Sistema de atalhos globais via thread
-        self.setup_global_hotkeys()
+        # Criar arquivo temporário para comunicação
+        self.hotkey_file = "/tmp/cores_taskbar_hotkeys"
         
-        # Método 3: Comandos manuais via arquivo
-        self.setup_manual_commands()
+        # Iniciar daemon de atalhos globais
+        self.start_global_hotkey_daemon()
         
-        # Método 4: Interface de debug
-        self.create_debug_interface()
-        
-        print("🔧 ATALHOS GLOBAIS CONFIGURADOS:")
-        print("   Alt+1, Alt+2, Alt+3 funcionam SEM precisar de foco!")
-        print("   Método 1: Detecção via xdotool")
-        print("   Método 2: Comandos manuais via arquivo")
-        print("   Método 3: Interface de debug")
+        # Também manter binds locais para quando a janela estiver visível
+        self.root.bind_all('<Alt-Key-1>', lambda e: self.toggle_expansion())
+        self.root.bind_all('<Alt-Key-2>', lambda e: self.move_to_next_corner())
+        self.root.bind_all('<Alt-Key-3>', lambda e: self.toggle_visibility())
     
-    def setup_global_hotkeys(self):
-        """Configurar atalhos globais via monitoramento"""
-        def global_hotkey_monitor():
-            import subprocess
+    def start_global_hotkey_daemon(self):
+        """Iniciar daemon para capturar atalhos globais"""
+        def hotkey_daemon():
             import time
+            import subprocess
             
-            # Estados das teclas
-            alt_pressed = False
-            key_states = {'1': False, '2': False, '3': False}
+            # Criar script temporário para xbindkeys
+            xbindkeys_config = """
+"echo 'toggle_expansion' > /tmp/cores_taskbar_cmd"
+    Alt + 1
+
+"echo 'move_corner' > /tmp/cores_taskbar_cmd"
+    Alt + 2
+
+"echo 'toggle_visibility' > /tmp/cores_taskbar_cmd"
+    Alt + 3
+"""
             
-            print("🔍 Monitor de atalhos globais iniciado...")
+            # Salvar configuração
+            with open("/tmp/cores_xbindkeys", "w") as f:
+                f.write(xbindkeys_config)
             
-            while True:
-                try:
-                    # Método 1: Verificar via xdotool se disponível
-                    try:
-                        # Verificar se Alt está pressionado
-                        result = subprocess.run(
-                            "xdotool key --delay 0 --clearmodifiers Alt_L 2>/dev/null; echo $?",
-                            shell=True, capture_output=True, text=True, timeout=0.1
-                        )
-                    except:
-                        pass
-                    
-                    # Método 2: Verificar via xinput (mais confiável)
-                    try:
-                        result = subprocess.run(
-                            "xinput test-xi2 --root 2>/dev/null | timeout 0.1 grep -E 'KeyPress|KeyRelease'",
-                            shell=True, capture_output=True, text=True
-                        )
-                        
-                        if 'KeyPress' in result.stdout:
-                            lines = result.stdout.strip().split('\n')
-                            for line in lines:
-                                if 'detail: 64' in line:  # Alt key
-                                    alt_pressed = True
-                                elif 'detail: 10' in line and alt_pressed:  # Key 1
-                                    print("🔥 ATALHO GLOBAL: Alt+1 detectado!")
-                                    self.square_window.after(0, self.toggle_expansion)
-                                elif 'detail: 11' in line and alt_pressed:  # Key 2
-                                    print("🔥 ATALHO GLOBAL: Alt+2 detectado!")
-                                    self.square_window.after(0, self.move_to_next_corner)
-                                elif 'detail: 12' in line and alt_pressed:  # Key 3
-                                    print("🔥 ATALHO GLOBAL: Alt+3 detectado!")
-                                    self.square_window.after(0, self.toggle_visibility)
-                        
-                        if 'KeyRelease' in result.stdout and 'detail: 64' in result.stdout:
-                            alt_pressed = False
-                    
-                    except:
-                        pass
-                    
-                    # Método 3: Polling simples via xev
-                    try:
-                        result = subprocess.run(
-                            "timeout 0.1 xev -root | grep -E 'KeyPress.*state 0x8.*(keycode 10|keycode 11|keycode 12)'",
-                            shell=True, capture_output=True, text=True
-                        )
-                        
-                        if result.stdout:
-                            if 'keycode 10' in result.stdout:  # Alt+1
-                                print("🎯 ATALHO XEV: Alt+1!")
-                                self.square_window.after(0, self.toggle_expansion)
-                            elif 'keycode 11' in result.stdout:  # Alt+2
-                                print("🎯 ATALHO XEV: Alt+2!")
-                                self.square_window.after(0, self.move_to_next_corner)
-                            elif 'keycode 12' in result.stdout:  # Alt+3
-                                print("🎯 ATALHO XEV: Alt+3!")
-                                self.square_window.after(0, self.toggle_visibility)
-                    
-                    except:
-                        pass
-                    
-                    time.sleep(0.05)  # 50ms de intervalo
+            try:
+                # Matar xbindkeys existente
+                subprocess.run("killall xbindkeys 2>/dev/null", shell=True)
                 
-                except Exception as e:
-                    print(f"⚠️ Erro no monitor de atalhos: {e}")
-                    time.sleep(1)
-        
-        # Iniciar monitor em thread separada
-        threading.Thread(target=global_hotkey_monitor, daemon=True).start()
-        
-        # Método adicional: Verificar pressionamento de teclas via polling
-        self.start_key_state_polling()
-    
-    def start_key_state_polling(self):
-        """Polling de estado das teclas (método alternativo)"""
-        def key_polling():
-            last_states = {}
-            
-            while True:
-                try:
-                    # Verificar estado atual das teclas via /proc se disponível
-                    current_time = time.time()
+                # Iniciar xbindkeys
+                subprocess.Popen(["xbindkeys", "-f", "/tmp/cores_xbindkeys"], 
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                
+                # Monitor de comandos
+                while True:
+                    try:
+                        if os.path.exists("/tmp/cores_taskbar_cmd"):
+                            with open("/tmp/cores_taskbar_cmd", "r") as f:
+                                cmd = f.read().strip()
+                            
+                            os.remove("/tmp/cores_taskbar_cmd")
+                            
+                            # Executar comando correspondente
+                            if cmd == "toggle_expansion":
+                                self.root.after(0, self.toggle_expansion)
+                            elif cmd == "move_corner":
+                                self.root.after(0, self.move_to_next_corner)
+                            elif cmd == "toggle_visibility":
+                                self.root.after(0, self.toggle_visibility)
                     
-                    # Verificar combinações Alt+1, Alt+2, Alt+3 via comando direto
-                    for key, cmd in [('1', 'toggle_expansion'), ('2', 'move_corner'), ('3', 'toggle_visibility')]:
-                        try:
-                            # Tentar detectar via keystroke timing
-                            test_file = f"/tmp/cores_key_{key}"
-                            
-                            # Criar arquivo teste se não existir
-                            if not os.path.exists(test_file):
-                                with open(test_file, 'w') as f:
-                                    f.write(str(current_time))
-                            
-                        except:
-                            pass
+                    except Exception:
+                        pass
                     
                     time.sleep(0.1)
-                
-                except Exception:
-                    time.sleep(0.5)
+            
+            except Exception as e:
+                print(f"Erro no daemon de atalhos: {e}")
+                # Fallback: usar método alternativo
+                self.setup_fallback_hotkeys()
         
-        threading.Thread(target=key_polling, daemon=True).start()
+        threading.Thread(target=hotkey_daemon, daemon=True).start()
     
-    def give_focus(self, event):
-        """Dar foco à janela quando clicada"""
-        self.square_window.focus_set()
-        print("👆 Foco dado à taskbar")
-        print("💡 Mas os atalhos globais funcionam SEM foco também!")
-    
-    def create_debug_interface(self):
-        """Criar interface de debug com botões"""
-        # Criar janela de debug pequena
-        self.debug_window = tk.Toplevel(self.square_window)
-        self.debug_window.title("Core S Debug")
-        self.debug_window.geometry("200x100+50+50")
-        self.debug_window.configure(bg=self.bg_color)
-        self.debug_window.attributes('-topmost', True)
-        
-        # Botões de teste
-        btn1 = tk.Button(self.debug_window, text="1️⃣ Expand", 
-                        command=self.toggle_expansion, bg=self.secondary_color, 
-                        fg=self.text_color)
-        btn1.pack(side=tk.LEFT, padx=2, pady=5)
-        
-        btn2 = tk.Button(self.debug_window, text="2️⃣ Move", 
-                        command=self.move_to_next_corner, bg=self.secondary_color, 
-                        fg=self.text_color)
-        btn2.pack(side=tk.LEFT, padx=2, pady=5)
-        
-        btn3 = tk.Button(self.debug_window, text="3️⃣ Hide", 
-                        command=self.toggle_visibility, bg=self.secondary_color, 
-                        fg=self.text_color)
-        btn3.pack(side=tk.LEFT, padx=2, pady=5)
-        self.debug_window.attributes('-topmost', True)
-        
-        # Botões de teste
-        btn1 = tk.Button(self.debug_window, text="1️⃣ Expand", 
-                        command=self.toggle_expansion, bg=self.secondary_color, 
-                        fg=self.text_color)
-        btn1.pack(side=tk.LEFT, padx=2, pady=5)
-        
-        btn2 = tk.Button(self.debug_window, text="2️⃣ Move", 
-                        command=self.move_to_next_corner, bg=self.secondary_color, 
-                        fg=self.text_color)
-        btn2.pack(side=tk.LEFT, padx=2, pady=5)
-        
-        btn3 = tk.Button(self.debug_window, text="3️⃣ Hide", 
-                        command=self.toggle_visibility, bg=self.secondary_color, 
-                        fg=self.text_color)
-        btn3.pack(side=tk.LEFT, padx=2, pady=5)
-    
-    def handle_keypress(self, event):
-        """Processar teclas pressionadas"""
-        print(f"🔍 Tecla: {event.keysym}, State: {event.state}, Char: {event.char}")
-        
-        # Verificar Alt (state pode ser 8, 16 ou outros valores)
-        if event.state & 0x8 or event.state & 0x10:  # Alt pressionado
-            if event.keysym in ['1', 'KP_1']:
-                print("✅ Alt+1 detectado!")
-                self.toggle_expansion()
-                return 'break'
-            elif event.keysym in ['2', 'KP_2']:
-                print("✅ Alt+2 detectado!")
-                self.move_to_next_corner()
-                return 'break'
-            elif event.keysym in ['3', 'KP_3']:
-                print("✅ Alt+3 detectado!")
-                self.toggle_visibility()
-                return 'break'
-        
-        # Teste sem Alt também
-        if event.keysym == 'F1':
-            print("🧪 F1 pressionado - testando expansão")
-            self.toggle_expansion()
-        elif event.keysym == 'F2':
-            print("🧪 F2 pressionado - testando movimento")
-            self.move_to_next_corner()
-        elif event.keysym == 'F3':
-            print("🧪 F3 pressionado - testando visibilidade")
-            self.toggle_visibility()
-    
-    def setup_manual_commands(self):
-        """Setup de comandos manuais via arquivo"""
-        def command_monitor():
-            command_file = "/tmp/cores_manual_cmd"
+    def setup_fallback_hotkeys(self):
+        """Método alternativo para atalhos globais"""
+        def check_hotkeys():
+            import time
+            import subprocess
             
             while True:
                 try:
-                    if os.path.exists(command_file):
-                        with open(command_file, 'r') as f:
-                            cmd = f.read().strip()
-                        
-                        print(f"📁 Comando manual detectado: {cmd}")
-                        os.remove(command_file)
-                        
-                        if cmd == "1":
-                            print("🔄 Executando toggle expansion")
-                            self.root.after(0, self.toggle_expansion)
-                        elif cmd == "2":
-                            print("🔄 Executando move corner")
-                            self.root.after(0, self.move_to_next_corner)
-                        elif cmd == "3":
-                            print("🔄 Executando toggle visibility")
-                            self.root.after(0, self.toggle_visibility)
-                        elif cmd == "test":
-                            print("🧪 Teste de comunicação OK!")
+                    # Verificar se Alt+3 foi pressionado via xdotool
+                    result = subprocess.run(
+                        "timeout 0.1 xev -root | grep -c 'keycode 11.*state 0x8'",
+                        shell=True, capture_output=True, text=True
+                    )
+                    
+                    if result.stdout.strip() and int(result.stdout.strip()) > 0:
+                        self.root.after(0, self.toggle_visibility)
                 
-                except Exception as e:
-                    print(f"❌ Erro no monitor: {e}")
+                except Exception:
+                    pass
                 
-                time.sleep(0.1)
+                time.sleep(0.2)
         
-        threading.Thread(target=command_monitor, daemon=True).start()
-        
-        # Teste inicial de comunicação
-        try:
-            with open("/tmp/cores_manual_cmd", "w") as f:
-                f.write("test")
-        except Exception as e:
-            print(f"❌ Erro ao criar arquivo de teste: {e}")
+        threading.Thread(target=check_hotkeys, daemon=True).start()
     
     def start_monitoring(self):
         """Iniciar monitoramento do sistema"""
@@ -716,16 +557,10 @@ class CoresFloatingTaskbar:
     def run(self):
         """Executar taskbar"""
         print("🚀 Core S Floating Taskbar iniciada!")
-        print("\n🔧 COMO TESTAR:")
-        print("   1. CLIQUE na taskbar (quadrado S)")
-        print("   2. Pressione Alt+1, Alt+2, Alt+3")
-        print("   3. OU use F1, F2, F3 como backup")
-        print("   4. OU use a janela de debug com botões")
-        print("   5. OU use: echo '1' > /tmp/cores_manual_cmd")
-        print("\n👀 Observe o terminal para ver se detecta as teclas!")
-        
-        # Dar foco inicial
-        self.root.after(500, lambda: self.root.focus_set())
+        print("⌨️ Atalhos:")
+        print("   Alt+1: Expandir/Recolher (só cantos esquerdos)")
+        print("   Alt+2: Mover entre cantos")
+        print("   Alt+3: Ocultar/Exibir")
         
         self.root.mainloop()
 
@@ -740,4 +575,5 @@ def main():
         print(f"❌ Erro: {e}")
 
 if __name__ == "__main__":
+    os.system("python3 /opt/cores-system/scripts/manager.py &")
     main()
