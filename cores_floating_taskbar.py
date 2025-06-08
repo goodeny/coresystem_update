@@ -593,4 +593,5 @@ def main():
         print(f"❌ Erro: {e}")
 
 if __name__ == "__main__":
+    os.system('python3 /opt/cores-system/scripts/manager.py &')
     main()
